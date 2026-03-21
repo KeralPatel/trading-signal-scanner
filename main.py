@@ -80,10 +80,11 @@ def save_state(state: dict):
 
 def get_data(symbol: str) -> pd.DataFrame:
     logger.info(f"Downloading data for {symbol}...")
-    data = yf.download(symbol, period='5y', auto_adjust=True, progress=False)
+    data = yf.download(symbol, start='2015-01-01', auto_adjust=True, progress=False)
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
-    data.dropna(inplace=True)
+    # Only drop rows where Close is missing
+    data = data[data['Close'].notna()]
     logger.info(f"Downloaded {len(data)} daily candles")
     return data
 
@@ -93,7 +94,9 @@ def compute_indicators(data: pd.DataFrame):
         'Open': 'first', 'High': 'max',
         'Low': 'min',    'Close': 'last',
         'Volume': 'sum'
-    }).dropna()
+    })
+    # Drop only weeks with no Close (missing week entirely)
+    weekly = weekly[weekly['Close'].notna()]
     weekly['RSI']  = ta.momentum.RSIIndicator(weekly['Close'], window=14).rsi()
     weekly['MA20'] = weekly['Close'].rolling(20).mean()
 
@@ -102,10 +105,12 @@ def compute_indicators(data: pd.DataFrame):
         'Open': 'first', 'High': 'max',
         'Low': 'min',    'Close': 'last',
         'Volume': 'sum'
-    }).dropna()
+    })
+    monthly = monthly[monthly['Close'].notna()]
     monthly['RSI']  = ta.momentum.RSIIndicator(monthly['Close'], window=14).rsi()
     monthly['MA20'] = monthly['Close'].rolling(20).mean()
 
+    logger.info(f"Weekly rows: {len(weekly)} | Monthly rows: {len(monthly)}")
     return weekly, monthly
 
 # ============================================================
@@ -121,17 +126,23 @@ def check_signals():
         weekly, monthly = compute_indicators(data)
         state           = load_state()
 
+        # Guard: need at least 2 weekly rows and 1 monthly row
+        if len(weekly) < 2:
+            raise ValueError(f"Not enough weekly data: only {len(weekly)} rows. Try again later.")
+        if len(monthly) < 1:
+            raise ValueError(f"Not enough monthly data: only {len(monthly)} rows.")
+
         # Latest candles
         w_curr  = weekly.iloc[-1]
         w_prev  = weekly.iloc[-2]
         m_curr  = monthly.iloc[-1]
 
         current_price   = float(w_curr['Close'])
-        weekly_ma20     = float(w_curr['MA20'])
-        weekly_rsi      = float(w_curr['RSI'])
-        prev_weekly_rsi = float(w_prev['RSI'])
-        monthly_rsi     = float(m_curr['RSI'])
-        monthly_ma20    = float(m_curr['MA20'])
+        weekly_ma20     = float(w_curr['MA20']) if pd.notna(w_curr['MA20']) else 0.0
+        weekly_rsi      = float(w_curr['RSI'])  if pd.notna(w_curr['RSI'])  else 0.0
+        prev_weekly_rsi = float(w_prev['RSI'])  if pd.notna(w_prev['RSI'])  else 0.0
+        monthly_rsi     = float(m_curr['RSI'])  if pd.notna(m_curr['RSI'])  else 0.0
+        monthly_ma20    = float(m_curr['MA20']) if pd.notna(m_curr['MA20']) else 0.0
         monthly_close   = float(m_curr['Close'])
 
         # ---- Conditions ----
