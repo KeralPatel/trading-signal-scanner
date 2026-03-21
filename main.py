@@ -80,12 +80,26 @@ def save_state(state: dict):
 
 def get_data(symbol: str) -> pd.DataFrame:
     logger.info(f"Downloading data for {symbol}...")
-    data = yf.download(symbol, start='2015-01-01', auto_adjust=True, progress=False)
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
-    # Only drop rows where Close is missing
+
+    # Use Ticker.history() — avoids MultiIndex issues with yf.download()
+    ticker = yf.Ticker(symbol)
+    data   = ticker.history(start='2015-01-01', auto_adjust=True)
+
+    logger.info(f"Raw shape: {data.shape} | Columns: {data.columns.tolist()}")
+
+    if data.empty:
+        raise ValueError(f"yfinance returned no data for {symbol}. Check symbol name.")
+
+    # Keep only OHLCV
+    data = data[['Open', 'High', 'Low', 'Close', 'Volume']]
+
+    # Drop rows with missing Close
     data = data[data['Close'].notna()]
-    logger.info(f"Downloaded {len(data)} daily candles")
+
+    # Remove timezone info from index (keeps resample clean)
+    data.index = data.index.tz_localize(None) if data.index.tzinfo else data.index
+
+    logger.info(f"Clean data: {len(data)} daily candles ({data.index[0].date()} → {data.index[-1].date()})")
     return data
 
 def compute_indicators(data: pd.DataFrame):
@@ -95,7 +109,6 @@ def compute_indicators(data: pd.DataFrame):
         'Low': 'min',    'Close': 'last',
         'Volume': 'sum'
     })
-    # Drop only weeks with no Close (missing week entirely)
     weekly = weekly[weekly['Close'].notna()]
     weekly['RSI']  = ta.momentum.RSIIndicator(weekly['Close'], window=14).rsi()
     weekly['MA20'] = weekly['Close'].rolling(20).mean()
