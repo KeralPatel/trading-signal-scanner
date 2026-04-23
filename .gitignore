@@ -1,5 +1,12 @@
 .env
+.env.local
 state.json
+config.json
+trading.db
 __pycache__/
 *.pyc
+*.pyo
 .DS_Store
+node_modules/
+.next/
+.vercel/
