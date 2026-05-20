@@ -215,7 +215,11 @@ export default function ScannerPage() {
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={11} className="text-center text-slate-500 py-10">
-                  {initialized ? "No stocks match filter" : "Scanner not initialized — click Manual Init or wait for 8:45 AM"}
+                  {!initialized
+                    ? "Scanner not initialized — click Manual Init or wait for 8:45 AM"
+                    : rows.length === 0
+                    ? "Watchlist is empty — go to Watchlist page and add stocks, then click Manual Init"
+                    : "No stocks match the current filter"}
                 </td>
               </tr>
             )}
