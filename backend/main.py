@@ -132,3 +132,39 @@ def trigger_scan():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/debug/nse")
+def debug_nse():
+    """Test NSE connectivity — call this to check if NSE APIs are reachable."""
+    import requests
+    results = {}
+
+    # Test 1: NSE homepage (session warm-up)
+    try:
+        r = requests.get("https://www.nseindia.com", timeout=10, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        results["homepage"] = {"status": r.status_code, "ok": r.status_code == 200}
+    except Exception as e:
+        results["homepage"] = {"status": "error", "ok": False, "error": str(e)}
+
+    # Test 2: F&O quotes endpoint
+    try:
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://www.nseindia.com/",
+        })
+        session.get("https://www.nseindia.com", timeout=10)
+        r = session.get(
+            "https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O",
+            timeout=15
+        )
+        data = r.json()
+        count = len(data.get("data", []))
+        results["fo_quotes"] = {"status": r.status_code, "ok": count > 0, "rows": count}
+    except Exception as e:
+        results["fo_quotes"] = {"status": "error", "ok": False, "error": str(e)}
+
+    return results
