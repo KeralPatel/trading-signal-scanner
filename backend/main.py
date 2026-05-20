@@ -19,7 +19,45 @@ from api.position import router as position_router
 from api.history import router as history_router
 from api.settings import router as settings_router
 from api.watchlist import router as watchlist_router
-from scheduler import create_scheduler, scanner_state, job_premarkets_init
+import threading
+from datetime import datetime
+
+import pytz
+
+from scheduler import create_scheduler, scanner_state, job_premarkets_init, job_market_open
+
+IST = pytz.timezone("Asia/Kolkata")
+
+# Market session boundaries (IST)
+_MARKET_OPEN_H, _MARKET_OPEN_M = 9, 15
+_MARKET_CLOSE_H, _MARKET_CLOSE_M = 15, 29
+_PREINIT_H, _PREINIT_M = 8, 45
+
+
+def _catchup_on_startup():
+    """
+    If the service starts mid-session (e.g. after a redeploy or Render cold start),
+    the 8:45 and 9:15 scheduled jobs have already passed. Replay them so the
+    scanner is immediately live instead of waiting until tomorrow.
+    """
+    now = datetime.now(IST)
+    if now.weekday() >= 5:  # Saturday / Sunday — no market
+        return
+
+    total_minutes = now.hour * 60 + now.minute
+
+    pre_init_minutes = _PREINIT_H * 60 + _PREINIT_M          # 525
+    market_open_minutes = _MARKET_OPEN_H * 60 + _MARKET_OPEN_M  # 555
+    market_close_minutes = _MARKET_CLOSE_H * 60 + _MARKET_CLOSE_M  # 929
+
+    if pre_init_minutes <= total_minutes <= market_close_minutes:
+        # We're inside (or past) the pre-market window — run init in background
+        t = threading.Thread(target=job_premarkets_init, daemon=True)
+        t.start()
+
+    if market_open_minutes <= total_minutes <= market_close_minutes:
+        # Market is currently open — flip the flag immediately
+        job_market_open()
 
 
 @asynccontextmanager
@@ -42,6 +80,9 @@ async def lifespan(app: FastAPI):
     scheduler = create_scheduler()
     scheduler.start()
     app.state.scheduler = scheduler
+
+    # Replay missed startup jobs if we launched during market hours
+    _catchup_on_startup()
 
     yield
 
