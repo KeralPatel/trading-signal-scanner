@@ -173,7 +173,7 @@ def job_lock_15min_candles():
          LONG  + gap-down > 3% → SL = 15-min candle LOW
          SHORT + gap-up   > 3% → SL = 15-min candle HIGH
        Uses live NSE open/prevClose for the gap calculation (more accurate
-       than the pre-market yfinance data fetched at 8:45).
+       than the pre-market NSE historical data fetched at 8:45).
     """
     logger.info("Locking 15-min candles…")
     db = _get_db()
