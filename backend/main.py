@@ -62,19 +62,20 @@ def _catchup_on_startup():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create DB tables
-    Base.metadata.create_all(bind=engine)
-
-    # Seed default settings if missing
-    from db.database import SessionLocal
-    from db.models import Settings as S
-    db = SessionLocal()
+    # Create DB tables — wrapped so a DB outage at startup doesn't kill the service
     try:
-        if not db.query(S).first():
-            db.add(S())
-            db.commit()
-    finally:
-        db.close()
+        Base.metadata.create_all(bind=engine)
+        from db.database import SessionLocal
+        from db.models import Settings as S
+        db = SessionLocal()
+        try:
+            if not db.query(S).first():
+                db.add(S())
+                db.commit()
+        finally:
+            db.close()
+    except Exception as exc:
+        logging.error("DB init failed (will retry on first request): %s", exc)
 
     # Start background scheduler
     scheduler = create_scheduler()
