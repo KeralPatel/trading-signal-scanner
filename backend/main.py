@@ -134,6 +134,19 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/debug/db")
+def debug_db():
+    """Show which database URL is active (masked password)."""
+    from db.database import DATABASE_URL
+    masked = DATABASE_URL
+    if "@" in DATABASE_URL:
+        # hide password: postgresql://user:PASS@host/db → postgresql://user:***@host/db
+        parts = DATABASE_URL.split("@")
+        creds = parts[0].rsplit(":", 1)
+        masked = creds[0] + ":***@" + parts[1]
+    return {"database_url": masked}
+
+
 @app.get("/api/debug/nse")
 def debug_nse():
     """Test NSE connectivity — call this to check if NSE APIs are reachable."""
