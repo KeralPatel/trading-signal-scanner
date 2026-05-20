@@ -143,28 +143,60 @@ def _fetch_historical_ohlc(session: requests.Session, symbol: str, trading_date:
 def get_prev_day_ohlc_bulk(symbols: list[str]) -> dict[str, dict]:
     """
     Fetch previous trading day OHLC for a list of NSE symbols.
-    Uses NSE historical CM equity API — no yfinance or pandas required.
+    Uses Yahoo Finance chart API — works from any server globally.
     Returns {SYMBOL: {open, high, low, close, today_open}}.
     """
     if not symbols:
         return {}
 
-    session = requests.Session()
-    session.headers.update(_NSE_HEADERS)
-    # Warm up NSE session
-    try:
-        session.get("https://www.nseindia.com", timeout=10)
-        time.sleep(0.3)
-    except Exception:
-        pass
+    _YF_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
 
-    prev_date = _prev_trading_date()
     result: dict[str, dict] = {}
     for sym in symbols:
-        ohlc = _fetch_historical_ohlc(session, sym, prev_date)
-        if ohlc:
-            result[sym] = ohlc
-        time.sleep(0.1)  # gentle rate limiting
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}.NS"
+        params = {"interval": "1d", "range": "5d"}
+        try:
+            r = requests.get(url, params=params, headers=_YF_HEADERS, timeout=10)
+            r.raise_for_status()
+            res = r.json().get("chart", {}).get("result")
+            if not res:
+                logger.warning("No chart data from Yahoo for %s", sym)
+                continue
+            res = res[0]
+            ohlcv = res.get("indicators", {}).get("quote", [{}])[0]
+            opens  = ohlcv.get("open", [])
+            highs  = ohlcv.get("high", [])
+            lows   = ohlcv.get("low", [])
+            closes = ohlcv.get("close", [])
+            # Filter out None values
+            valid = [
+                (opens[i], highs[i], lows[i], closes[i])
+                for i in range(len(opens))
+                if opens[i] and highs[i] and lows[i] and closes[i]
+            ]
+            if len(valid) < 2:
+                logger.warning("Not enough OHLC rows for %s (%d valid)", sym, len(valid))
+                continue
+            prev  = valid[-2]
+            today = valid[-1]
+            result[sym] = {
+                "open":       float(prev[0]),
+                "high":       float(prev[1]),
+                "low":        float(prev[2]),
+                "close":      float(prev[3]),
+                "today_open": float(today[0]),
+            }
+            logger.info("OHLC loaded for %s: prev_H=%.2f prev_L=%.2f", sym, prev[1], prev[2])
+        except Exception as exc:
+            logger.warning("OHLC fetch failed for %s: %s", sym, exc)
+        time.sleep(0.05)
     return result
 
 
@@ -174,28 +206,39 @@ def get_prev_day_ohlc_bulk(symbols: list[str]) -> dict[str, dict]:
 
 def get_first_15min_candle(symbol: str) -> dict | None:
     """
-    Return the 9:15–9:30 candle high/low for a symbol using NSE quote API.
-    Called at 09:30 IST — intraDayHighLow at that point represents the
-    first 15 minutes of trading.
+    Return the 9:15–9:30 candle via Yahoo Finance 15-min data.
+    Works from any server globally.
     Returns {open, high, low, close} or None.
     """
-    session = requests.Session()
-    session.headers.update(_NSE_HEADERS)
+    _YF_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+    }
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}.NS"
+    params = {"interval": "15m", "range": "1d"}
     try:
-        session.get("https://www.nseindia.com", timeout=10)
-        time.sleep(0.2)
-        url = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
-        r = session.get(url, timeout=10)
+        r = requests.get(url, params=params, headers=_YF_HEADERS, timeout=10)
         r.raise_for_status()
-        data = r.json()
-        price_info = data.get("priceInfo", {})
-        intra = price_info.get("intraDayHighLow", {})
-        high = float(intra.get("max", 0) or 0)
-        low = float(intra.get("min", 0) or 0)
-        open_ = float(price_info.get("open", 0) or 0)
-        last = float(price_info.get("lastPrice", 0) or 0)
-        if high > 0 and low > 0:
-            return {"open": open_, "high": high, "low": low, "close": last}
+        res = r.json().get("chart", {}).get("result")
+        if not res:
+            return None
+        ohlcv = res[0].get("indicators", {}).get("quote", [{}])[0]
+        opens  = ohlcv.get("open", [])
+        highs  = ohlcv.get("high", [])
+        lows   = ohlcv.get("low", [])
+        closes = ohlcv.get("close", [])
+        if not opens or not highs[0] or not lows[0]:
+            return None
+        return {
+            "open":  float(opens[0]  or 0),
+            "high":  float(highs[0]  or 0),
+            "low":   float(lows[0]   or 0),
+            "close": float(closes[0] or 0),
+        }
     except Exception as exc:
         logger.warning("15-min candle fetch failed for %s: %s", symbol, exc)
     return None
