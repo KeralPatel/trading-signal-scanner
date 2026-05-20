@@ -57,26 +57,35 @@ def import_all_fo(db: Session = Depends(get_db)):
     Bulk-import all NSE F&O stocks into the watchlist with lot_size=1.
     Skips symbols already present. Returns counts of added and skipped.
     """
-    from data.nse_client import NSEClient
-    nse = NSEClient()
+    import requests as _req
+    _headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Referer": "https://www.nseindia.com/",
+    }
+    try:
+        session = _req.Session()
+        session.headers.update(_headers)
+        session.get("https://www.nseindia.com", timeout=10)
+        r = session.get(
+            "https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O",
+            timeout=15,
+        )
+        r.raise_for_status()
+        quotes = r.json().get("data", [])
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"NSE fetch failed: {exc}")
 
-    quotes = nse.get_fo_quotes()
     if not quotes:
-        raise HTTPException(status_code=503, detail="Could not fetch F&O quotes from NSE")
-
-    # Skip the first row — it's usually the index (NIFTY 50) not a stock
-    symbols = [
-        q["symbol"] for q in quotes
-        if q.get("symbol") and q.get("identifier", "").startswith("FUTSTK") is False
-        and q.get("symbol") not in ("NIFTY 50", "Nifty 50")
-    ]
+        raise HTTPException(status_code=503, detail="NSE returned empty F&O list")
 
     existing = {w.symbol for w in db.query(Watchlist).all()}
     added, skipped = 0, 0
 
-    for sym in symbols:
-        sym = sym.strip().upper()
-        if not sym or sym in existing:
+    for q in quotes:
+        sym = (q.get("symbol") or "").strip().upper()
+        # Skip index rows (e.g. "Nifty 50") — they have spaces
+        if not sym or " " in sym or sym in existing:
             skipped += 1
             continue
         db.add(Watchlist(symbol=sym, lot_size=1))
