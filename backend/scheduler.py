@@ -321,6 +321,8 @@ def job_run_scan():
 
     except Exception as exc:
         logger.error("Scan failed: %s", exc, exc_info=True)
+        with _state_lock:
+            scanner_state["error"] = f"Scan error: {exc}"
     finally:
         db.close()
 
