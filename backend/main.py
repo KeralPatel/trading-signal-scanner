@@ -135,6 +135,25 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/api/admin/init-db")
+def init_db():
+    """Force-create all DB tables. Safe to call multiple times (CREATE IF NOT EXISTS)."""
+    try:
+        Base.metadata.create_all(bind=engine)
+        from db.database import SessionLocal
+        from db.models import Settings as S
+        db = SessionLocal()
+        try:
+            if not db.query(S).first():
+                db.add(S())
+                db.commit()
+        finally:
+            db.close()
+        return {"status": "ok", "message": "Tables created and settings seeded"}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
 @app.get("/api/debug/db")
 def debug_db():
     """Show which database URL is active (masked password)."""
