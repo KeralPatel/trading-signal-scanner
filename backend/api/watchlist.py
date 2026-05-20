@@ -51,6 +51,42 @@ def update_lot_size(symbol: str, lot_size: int, db: Session = Depends(get_db)):
     return _serialize(entry)
 
 
+@router.post("/import-fo")
+def import_all_fo(db: Session = Depends(get_db)):
+    """
+    Bulk-import all NSE F&O stocks into the watchlist with lot_size=1.
+    Skips symbols already present. Returns counts of added and skipped.
+    """
+    from data.nse_client import NSEClient
+    nse = NSEClient()
+
+    quotes = nse.get_fo_quotes()
+    if not quotes:
+        raise HTTPException(status_code=503, detail="Could not fetch F&O quotes from NSE")
+
+    # Skip the first row — it's usually the index (NIFTY 50) not a stock
+    symbols = [
+        q["symbol"] for q in quotes
+        if q.get("symbol") and q.get("identifier", "").startswith("FUTSTK") is False
+        and q.get("symbol") not in ("NIFTY 50", "Nifty 50")
+    ]
+
+    existing = {w.symbol for w in db.query(Watchlist).all()}
+    added, skipped = 0, 0
+
+    for sym in symbols:
+        sym = sym.strip().upper()
+        if not sym or sym in existing:
+            skipped += 1
+            continue
+        db.add(Watchlist(symbol=sym, lot_size=1))
+        existing.add(sym)
+        added += 1
+
+    db.commit()
+    return {"added": added, "skipped": skipped, "total": len(existing)}
+
+
 @router.delete("/{symbol}")
 def remove_symbol(symbol: str, db: Session = Depends(get_db)):
     sym = symbol.upper()
